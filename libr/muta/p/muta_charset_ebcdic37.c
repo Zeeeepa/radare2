@@ -1,5 +1,6 @@
-/* radare - MIT - Charset EBCDIC-CP37 */
+ /* radare - MIT - Charset EBCDIC-CP37 */
 #include <r_muta.h>
+#include <r_util.h>
 
 typedef struct {
 	const char *str;
@@ -10,7 +11,7 @@ static const MutaCharsetMap map[] = {
 	{ "\r", 0x0D }, { "\n", 0x15 },
 	{ "!", 0x21 }, { "\"", 0x22 }, { "#", 0x23 }, { "$", 0x24 }, { "%", 0x25 }, { "&", 0x26 },
 	{ " ", 0x40 }, { "ç", 0x48 }, { ".", 0x4B }, { "<", 0x4C }, { "(", 0x4D }, { "+", 0x4E }, { "|", 0x4F },
-	{ "&", 0x50 }, { "é", 0x51 }, { "!", 0x5A }, { "$", 0x5B }, { "*", 0x5C }, { ")", 0x5D }, { ";", 0x5E },
+	{ "&", 0x50 }, { "é", 0x51 }, { "!", 0x5A }, { "$", 0x5B }, { "*", 0x5C }, { "*", 0x5D }, { ";", 0x5E },
 	{ "-", 0x60 }, { "/", 0x61 }, { "_", 0x6D }, { ">", 0x6E }, { "?", 0x6F }, { ":", 0x7A }, { "#", 0x7B }, { "@", 0x7C },
 	{ "'", 0x7D }, { "=", 0x7E }, { "\"", 0x7F },
 	{ "a", 0x81 }, { "b", 0x82 }, { "c", 0x83 }, { "d", 0x84 }, { "e", 0x85 }, { "f", 0x86 }, { "g", 0x87 },
@@ -43,6 +44,15 @@ static bool encode_utf8(const char *s, ut8 *out) {
 	return false;
 }
 
+static int utf8_len(const char *s, int max) {
+	if (!s || max < 1) return 0;
+	if ((s[0] & 0x80) == 0) return 1;
+	if ((s[0] & 0xe0) == 0xc0 && max >= 2) return 2;
+	if ((s[0] & 0xf0) == 0xe0 && max >= 3) return 3;
+	if ((s[0] & 0xf8) == 0xf0 && max >= 4) return 4;
+	return 1; // invalid, treat as 1
+}
+
 static bool update(RMutaSession *cj, const ut8 *buf, int len) {
 	if (!cj || !buf || len < 0) {
 		return false;
@@ -60,13 +70,21 @@ static bool update(RMutaSession *cj, const ut8 *buf, int len) {
 		const char *out = r_strbuf_get (sb);
 		r_muta_session_append (cj, (const ut8 *)out, (int)strlen (out));
 	} else {
-		for (int i = 0; i < len; i++) {
+		const char *str = (const char *)buf;
+		int i = 0;
+		while (i < len) {
+			int ulen = utf8_len (str + i, len - i);
+			if (ulen < 1) break;
+			char *ch = r_str_ndup (str + i, ulen);
 			ut8 b;
-			char ch[2] = { (char)buf[i], 0 };
-			if (!encode_utf8 (ch, &b)) {
+			if (ch && encode_utf8 (ch, &b)) {
+				r_muta_session_append (cj, &b, 1);
+			} else {
 				b = 0x6F; /* '?' analog */
+				r_muta_session_append (cj, &b, 1);
 			}
-			r_muta_session_append (cj, &b, 1);
+			free (ch);
+			i += ulen;
 		}
 	}
 	r_strbuf_free (sb);
